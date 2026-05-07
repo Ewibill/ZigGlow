@@ -1,0 +1,275 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zigverse Studio — Logo</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100%; height: 100%;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+canvas {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+}
+#logo {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0px;
+  z-index: 10;
+  pointer-events: none;
+}
+.wordmark {
+  font-family: 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  font-size: clamp(32px, 6vw, 72px);
+  font-weight: 400;
+  letter-spacing: 0.28em;
+  color: transparent;
+  background: linear-gradient(
+    135deg,
+    rgba(232,185,90,0.95) 0%,
+    rgba(255,215,120,1) 25%,
+    rgba(220,165,60,0.9) 50%,
+    rgba(255,225,140,1) 75%,
+    rgba(200,145,50,0.95) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  text-transform: uppercase;
+  position: relative;
+  filter: drop-shadow(0 0 18px rgba(220,170,60,0.4));
+  animation: breathe 4s ease-in-out infinite;
+}
+.zig { display: inline; }
+.verse {
+  color: transparent;
+  background: linear-gradient(
+    135deg,
+    rgba(180,220,200,0.9) 0%,
+    rgba(100,185,165,1) 40%,
+    rgba(60,160,140,0.85) 70%,
+    rgba(120,195,175,0.95) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.studio {
+  font-family: 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  font-size: clamp(10px, 1.4vw, 18px);
+  font-weight: 400;
+  letter-spacing: 0.55em;
+  color: rgba(200,160,70,0.6);
+  text-transform: uppercase;
+  margin-top: 6px;
+  animation: breathe 4s ease-in-out infinite;
+  animation-delay: 0.5s;
+}
+.rule {
+  width: clamp(120px, 22vw, 260px);
+  height: 0.5px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(100,180,160,0.4) 20%,
+    rgba(220,170,60,0.6) 50%,
+    rgba(100,180,160,0.4) 80%,
+    transparent 100%
+  );
+  margin: 10px 0 8px;
+  animation: rulePulse 4s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.85; filter: drop-shadow(0 0 14px rgba(220,170,60,0.3)); }
+  50% { opacity: 1; filter: drop-shadow(0 0 28px rgba(220,170,60,0.6)); }
+}
+@keyframes rulePulse {
+  0%, 100% { opacity: 0.4; transform: scaleX(0.92); }
+  50% { opacity: 0.85; transform: scaleX(1); }
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="logo">
+  <div class="wordmark"><span class="zig">Zig</span><span class="verse">verse</span></div>
+  <div class="rule"></div>
+  <div class="studio">Studio</div>
+</div>
+<script>
+// Living breath field behind the wordmark
+// Same DNA as ZigGlow — amber/teal palette, radial field, brightness inverse
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+function resize() {
+  cv.width = window.innerWidth;
+  cv.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const CX = () => cv.width / 2;
+const CY = () => cv.height / 2;
+
+// Breath simulation — sine-driven to mimic CC2 envelope
+let t = 0;
+let breathPhase = 0;
+
+function breath() {
+  // Layered breath — primary slow breath + micro variations
+  const slow = Math.sin(breathPhase * 0.7) * 0.5 + 0.5;
+  const mid  = Math.sin(breathPhase * 1.8 + 1.2) * 0.2;
+  const fast = Math.sin(breathPhase * 4.1 + 0.7) * 0.08;
+  return Math.max(0, Math.min(1, slow + mid + fast));
+}
+
+function brightness() {
+  // Brightness inverse — quiet = bright, loud = warm
+  const b = breath();
+  return 1 - b * 0.6; // inverse relationship
+}
+
+// Noise
+function sn(x, y, t) {
+  return Math.sin(x*0.018+t*0.42) * Math.cos(y*0.015-t*0.31)
+       + Math.sin(x*0.036-y*0.021+t*0.76)*0.5
+       + Math.cos(x*0.011+y*0.028-t*0.41)*0.35;
+}
+
+// Particles
+const NP = 90;
+const pts = Array.from({length:NP}, () => ({
+  a: Math.random()*Math.PI*2,
+  r: 0.06 + Math.random()*0.28,
+  spd: 0.002 + Math.random()*0.006,
+  sz: 0.003 + Math.random()*0.004,
+  ph: Math.random()*Math.PI*2,
+  hue: Math.random() < 0.6 ? 'amber' : 'teal',
+}));
+
+function draw() {
+  const w = cv.width, h = cv.height;
+  const cx = CX(), cy = CY();
+  const br = breath();
+  const brt = brightness();
+
+  // Persistence — quiet moments persist longer (brightness inverse)
+  const persist = 0.03 + br * 0.05;
+  ctx.fillStyle = `rgba(0,0,0,${persist})`;
+  ctx.fillRect(0, 0, w, h);
+
+  // Base field radius — breath driven
+  const fieldR = Math.min(w, h) * (0.12 + br * 0.18);
+
+  // Bass/foundation bloom — amber
+  const bassGrd = ctx.createRadialGradient(cx, cy, 0, cx, cy, fieldR * 2.8);
+  bassGrd.addColorStop(0,   `rgba(180,110,20,${0.04 + br*0.06})`);
+  bassGrd.addColorStop(0.4, `rgba(140,80,10,${0.02 + br*0.03})`);
+  bassGrd.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(1, fieldR*2.8), 0, Math.PI*2);
+  ctx.fillStyle = bassGrd;
+  ctx.fill();
+
+  // Brightness bloom — quiet = luminous (the key discovery)
+  if (brt > 0.45) {
+    const bloomR = Math.min(w,h) * 0.08 * brt;
+    const bloomAlpha = (brt - 0.45) * 0.35;
+    const bloomGrd = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(1,bloomR));
+    bloomGrd.addColorStop(0,   `rgba(255,220,120,${bloomAlpha})`);
+    bloomGrd.addColorStop(0.5, `rgba(220,170,60,${bloomAlpha*0.4})`);
+    bloomGrd.addColorStop(1,   'rgba(0,0,0,0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(1,bloomR), 0, Math.PI*2);
+    ctx.fillStyle = bloomGrd;
+    ctx.fill();
+  }
+
+  // Field arms — radial flow
+  const nArms = 40 + Math.round(br * 30);
+  for (let i = 0; i < nArms; i++) {
+    const fr = i / nArms;
+    const ang = fr * Math.PI * 2 + t * 0.1;
+    const nv = sn(Math.cos(ang)*40, Math.sin(ang)*40, t*0.7);
+    const r = fieldR * (0.3 + nv*0.7 + br*0.3);
+    const px = cx + Math.cos(ang) * r;
+    const py = cy + Math.sin(ang) * r * 0.68;
+    const al = (0.03 + br*0.08 + nv*0.04) * brt;
+    const isAmber = fr < 0.5;
+    const col = isAmber
+      ? `rgba(220,155,40,${al})`
+      : `rgba(80,175,155,${al})`;
+    ctx.beginPath();
+    ctx.arc(px, py, Math.max(0.001, 1.2 + br*2.2 + nv*1.5), 0, Math.PI*2);
+    ctx.fillStyle = col;
+    ctx.fill();
+  }
+
+  // Particles
+  pts.forEach(p => {
+    p.a += p.spd * (0.5 + br * 1.2);
+    const pr = Math.max(2, p.r * Math.min(w,h) * (0.5 + br*0.5));
+    const px = cx + Math.cos(p.a + t*0.07) * pr;
+    const py = cy + Math.sin(p.a + t*0.07) * pr * 0.72;
+    const al = (0.08 + br*0.18) * (0.3 + Math.sin(t*1.8+p.ph)*0.3) * brt;
+    const col = p.hue === 'amber'
+      ? `rgba(230,165,55,${al})`
+      : `rgba(90,180,160,${al})`;
+    ctx.beginPath();
+    ctx.arc(px, py, Math.max(0.001, p.sz*Math.min(w,h)), 0, Math.PI*2);
+    ctx.fillStyle = col;
+    ctx.fill();
+  });
+
+  // Spiral
+  ctx.beginPath();
+  let first = true;
+  for (let i = 0; i <= 220; i++) {
+    const fr = i/220;
+    const ang = fr*Math.PI*5 + t*1.1;
+    const nv = sn(Math.cos(ang*0.4)*35, Math.sin(ang*0.38)*35, t)*14;
+    const r2 = Math.max(0.1,
+      Math.min(w,h)*0.012
+      + Math.sin(t*0.65)*Math.min(w,h)*0.01
+      + nv*(0.45+brt*0.5)
+      + fr*Math.min(w,h)*0.13*(0.55+br*0.55)
+    );
+    const px = cx + Math.cos(ang)*r2;
+    const py = cy + Math.sin(ang)*r2*0.7;
+    first ? (ctx.moveTo(px,py), first=false) : ctx.lineTo(px,py);
+  }
+  ctx.strokeStyle = `rgba(210,160,50,${0.06+br*0.07})`;
+  ctx.lineWidth = 1.0;
+  ctx.stroke();
+
+  // Core pulse — the breath made visible
+  const cR = Math.max(0.1, Math.min(w,h)*0.004 + Math.sin(t*2.6)*Math.min(w,h)*0.003 + br*Math.min(w,h)*0.012);
+  const cGrd = ctx.createRadialGradient(cx,cy,0, cx,cy, cR+Math.min(w,h)*0.022);
+  cGrd.addColorStop(0,   `rgba(255,228,155,${0.7+brt*0.3})`);
+  cGrd.addColorStop(0.4, `rgba(220,160,50,0.25)`);
+  cGrd.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(0.5, cR+Math.min(w,h)*0.022), 0, Math.PI*2);
+  ctx.fillStyle = cGrd;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(0.1, cR), 0, Math.PI*2);
+  ctx.fillStyle = `rgba(255,232,170,${0.72+Math.sin(t*2.8)*0.28})`;
+  ctx.fill();
+
+  t += 0.014;
+  breathPhase += 0.022;
+  requestAnimationFrame(draw);
+}
+
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
