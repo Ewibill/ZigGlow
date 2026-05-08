@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>ZigGlow Live · Breath into Bloom</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center;flex-direction:column}
+canvas{display:block;max-width:100vw;max-height:100vh}
+#start{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:#000;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  z-index:100;cursor:pointer;
+  padding:40px;text-align:center;
+}
+#start h1{
+  font-family:Georgia,serif;font-size:clamp(28px,7vw,52px);
+  font-weight:400;letter-spacing:0.15em;
+  background:linear-gradient(135deg,#e8a855,#f5c96a,#c87d38);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;margin-bottom:12px;
+}
+#start h2{
+  font-family:Georgia,serif;font-size:clamp(13px,3.5vw,20px);
+  color:rgba(200,140,80,0.6);letter-spacing:0.25em;
+  font-weight:400;text-transform:uppercase;margin-bottom:48px;
+}
+#start .btn{
+  background:transparent;border:1px solid rgba(200,120,60,0.5);
+  color:rgba(220,160,80,0.9);font-family:Georgia,serif;
+  font-size:clamp(14px,3.5vw,18px);letter-spacing:0.3em;
+  text-transform:uppercase;padding:18px 42px;cursor:pointer;
+  transition:all 0.4s;
+}
+#start .btn:hover{border-color:rgba(220,160,80,0.9);color:#fff;}
+#start .sub{
+  margin-top:32px;font-family:Georgia,serif;
+  font-size:clamp(11px,2.8vw,14px);color:rgba(180,120,60,0.45);
+  letter-spacing:0.15em;line-height:1.8;
+}
+#info{
+  position:fixed;bottom:22px;left:50%;transform:translateX(-50%);
+  text-align:center;pointer-events:none;opacity:0;
+  transition:opacity 1s;z-index:10;
+}
+#info.show{opacity:0.7}
+#info.fade{opacity:0;transition:opacity 3s}
+.it{color:rgba(220,140,80,0.9);font-family:Georgia,serif;
+    font-size:11px;letter-spacing:0.22em;text-transform:uppercase}
+.is{color:rgba(180,110,55,0.5);font-family:Georgia,serif;
+    font-size:9px;letter-spacing:0.2em;margin-top:4px}
+#breath-hint{
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  text-align:center;pointer-events:none;opacity:0;
+  transition:opacity 1.5s;z-index:10;
+}
+#breath-hint.show{opacity:0.5}
+#breath-hint p{
+  font-family:Georgia,serif;font-size:clamp(14px,4vw,20px);
+  color:rgba(220,160,80,0.8);letter-spacing:0.25em;
+  text-transform:uppercase;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="start">
+  <h1>ZigGlow</h1>
+  <h2>Breath into Bloom</h2>
+  <button class="btn" onclick="startExperience()">Begin</button>
+  <p class="sub">
+    Hum, sing, or play into your device<br>
+    Watch your breath become light<br><br>
+    Zigverse Studio &nbsp;&middot;&nbsp; Bill Hall
+  </p>
+</div>
+
+<div id="info">
+  <div class="it">ZigGlow &nbsp;&middot;&nbsp; Live Breath</div>
+  <div class="is">Zigverse Studio &nbsp;&middot;&nbsp; Your breath &nbsp;&middot;&nbsp; Your bloom</div>
+</div>
+
+<div id="breath-hint"><p>breathe...</p></div>
+
+<script>
+// ============================================================
+// ZIGGLOW LIVE BREATH
+// Real-time microphone analysis via Web Audio API
+// Visual grammar: blooming flowers driven by breath
+// Brightness inverse: quiet breath = most luminous bloom
+// No data files. No recording. Pure breath, pure light.
+// Zigverse Studio - Bill Hall - zig@zigverse.studio
+// ============================================================
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const INFO = document.getElementById('info');
+const HINT = document.getElementById('breath-hint');
+
+function resize() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const ratio = 9/16;
+  if(vw/vh < ratio) {
+    cv.width = vw; cv.height = Math.round(vw/ratio);
+  } else {
+    cv.height = vh; cv.width = Math.round(vh*ratio);
+  }
+}
+resize();
+window.addEventListener('resize', resize);
+const W = () => cv.width, H = () => cv.height;
+const CX = () => cv.width/2, CY = () => cv.height/2;
+
+// === REAL-TIME AUDIO ANALYSIS ===
+let analyser, dataArray, freqArray;
+let audioCtx = null;
+let isRunning = false;
+
+// Smoothed breath values
+let amp = 0;        // breath amplitude 0-1
+let bright = 0;     // brightness (inverted) 0-1
+let onset = 0;      // attack strength 0-1
+let pitchHue = 0;   // dominant frequency hue 0-1
+let prevRMS = 0;    // for onset detection
+
+function initAudio(stream) {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioCtx.createMediaStreamSource(stream);
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.5;
+  source.connect(analyser);
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+  freqArray = new Float32Array(analyser.frequencyBinCount);
+}
+
+function analyzeAudio() {
+  if(!analyser) return;
+
+  analyser.getByteTimeDomainData(dataArray);
+  analyser.getFloatFrequencyData(freqArray);
+
+  // RMS amplitude — breath pressure proxy
+  let sum = 0;
+  for(let i=0; i<dataArray.length; i++) {
+    const v = (dataArray[i]/128) - 1;
+    sum += v*v;
+  }
+  const rms = Math.sqrt(sum/dataArray.length);
+  const rawAmp = Math.min(1, rms * 22);
+
+  // Smooth amplitude
+  amp += (rawAmp - amp) * 0.12;
+
+  // Onset detection — sudden amplitude increase
+  const ampDiff = rawAmp - prevRMS;
+  const rawOnset = Math.max(0, ampDiff * 12);
+  onset += (rawOnset - onset) * 0.25;
+  prevRMS = rawAmp;
+
+  // Spectral brightness — ratio of high freq to total
+  // THIS IS THE BRIGHTNESS INVERSE DISCOVERY
+  // Quiet breath = richer upper harmonics = brighter field bloom
+  const sampleRate = audioCtx.sampleRate;
+  const binHz = sampleRate / analyser.fftSize;
+  const highCutoff = Math.floor(2000 / binHz);
+  let totalEnergy = 0, highEnergy = 0;
+  for(let i=1; i<freqArray.length; i++) {
+    const e = Math.pow(10, freqArray[i]/20);
+    totalEnergy += e;
+    if(i > highCutoff) highEnergy += e;
+  }
+  const brightnessRaw = totalEnergy > 0 ? highEnergy/totalEnergy : 0;
+  // Invert: quiet breath (low amp) with high brightness = maximum bloom
+  const invertedBright = amp < 0.05 ? 0 : brightnessRaw;
+  bright += (invertedBright - bright) * 0.08;
+
+  // Dominant frequency for color
+  let maxVal = -Infinity, maxIdx = 0;
+  const pitchMin = Math.floor(80/binHz);
+  const pitchMax = Math.floor(2000/binHz);
+  for(let i=pitchMin; i<pitchMax; i++) {
+    if(freqArray[i] > maxVal) { maxVal=freqArray[i]; maxIdx=i; }
+  }
+  const rawHue = (maxIdx - pitchMin) / (pitchMax - pitchMin);
+  pitchHue += (rawHue - pitchHue) * 0.05;
+}
+
+// === COLOR PALETTE ===
+// Warm blooming palette for Mother's Day
+// Rose, amber, gold, cream, soft teal accents
+function getBreathColor(hue, alpha) {
+  // Map breath hue to warm flower palette
+  const h = hue * 360;
+  // Rose to amber to gold range
+  if(h < 60)  return `rgba(220,80,100,${alpha})`;   // deep rose
+  if(h < 120) return `rgba(235,100,80,${alpha})`;   // coral
+  if(h < 180) return `rgba(225,145,50,${alpha})`;   // amber
+  if(h < 240) return `rgba(215,185,55,${alpha})`;   // gold
+  if(h < 300) return `rgba(180,210,140,${alpha})`;  // soft green
+  return `rgba(190,120,180,${alpha})`;               // soft violet
+}
+
+function getPetalColor(hue, layer, alpha) {
+  const h = (hue + layer*0.08) % 1;
+  const colors = [
+    [235,100,130], // rose
+    [245,130,80],  // peach
+    [225,160,55],  // amber
+    [215,190,70],  // gold
+    [200,220,160], // pale green
+    [180,140,210], // lavender
+    [250,200,180], // cream peach
+    [240,180,200], // blush
+  ];
+  const idx = Math.floor(h * colors.length) % colors.length;
+  const c = colors[idx];
+  return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+}
+
+// === FLOWER SYSTEM ===
+const MAX_FLOWERS = 12;
+const flowers = [];
+
+function spawnFlower(x, y, size, hue) {
+  if(flowers.length >= MAX_FLOWERS) flowers.shift();
+  flowers.push({
+    x, y,
+    size: size,
+    maxSize: size,
+    petals: 5 + Math.floor(Math.random()*4), // 5-8 petals
+    rotation: Math.random()*Math.PI*2,
+    rotSpeed: (Math.random()-0.5)*0.008,
+    hue,
+    bloom: 0,      // 0=bud, 1=fully open
+    bloomSpeed: 0.008 + Math.random()*0.006,
+    life: 0,
+    maxLife: 280 + Math.random()*200,
+    phase: Math.random()*Math.PI*2,
+    stemLength: 0,
+    swayPhase: Math.random()*Math.PI*2,
+  });
+}
+
+function drawFlower(f, t) {
+  const w=W(), h=H();
+  const px = f.x * w;
+  const py = f.y * h;
+  const size = f.size * f.bloom;
+  if(size < 1) return;
+
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(f.rotation + Math.sin(t*0.4+f.swayPhase)*0.04*(1-f.bloom*0.5));
+
+  const lifeRatio = f.life/f.maxLife;
+  const fadeAlpha = lifeRatio > 0.7 ? 1-(lifeRatio-0.7)/0.3 : 1;
+
+  // Petals
+  for(let p=0; p<f.petals; p++) {
+    const angle = (p/f.petals)*Math.PI*2;
+    const petalLen = size * (0.85 + Math.sin(t*0.8+p+f.phase)*0.08*f.bloom);
+    const petalW = size * 0.32 * f.bloom;
+
+    ctx.save();
+    ctx.rotate(angle);
+
+    // Petal shape using bezier
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.bezierCurveTo(
+      -petalW, petalLen*0.3,
+      -petalW*0.8, petalLen*0.7,
+      0, petalLen
+    );
+    ctx.bezierCurveTo(
+      petalW*0.8, petalLen*0.7,
+      petalW, petalLen*0.3,
+      0, 0
+    );
+
+    const pg = ctx.createRadialGradient(0,0,0, 0,petalLen*0.5,petalLen);
+    const baseAlpha = (0.55+amp*0.25) * fadeAlpha;
+    pg.addColorStop(0, getPetalColor(f.hue, p*0.1, baseAlpha+0.15));
+    pg.addColorStop(0.5, getPetalColor(f.hue, p*0.1+0.15, baseAlpha));
+    pg.addColorStop(1, getPetalColor(f.hue, p*0.1+0.3, baseAlpha*0.3));
+    ctx.fillStyle = pg;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Center
+  const centerR = Math.max(0.5, size*0.18*f.bloom);
+  const cg = ctx.createRadialGradient(0,0,0,0,0,centerR);
+  cg.addColorStop(0, `rgba(255,240,180,${(0.9+bright*0.1)*fadeAlpha})`);
+  cg.addColorStop(0.5, `rgba(240,200,100,${0.7*fadeAlpha})`);
+  cg.addColorStop(1, `rgba(200,140,50,${0.3*fadeAlpha})`);
+  ctx.beginPath();
+  ctx.arc(0,0,centerR,0,Math.PI*2);
+  ctx.fillStyle=cg;ctx.fill();
+
+  ctx.restore();
+}
+
+// === PETAL PARTICLES ===
+const petalParticles = [];
+const MAX_PETALS = 40;
+
+function spawnPetalParticle(x, y, hue) {
+  if(petalParticles.length >= MAX_PETALS) petalParticles.shift();
+  petalParticles.push({
+    x, y,
+    vx: (Math.random()-0.5)*0.008,
+    vy: -0.002-Math.random()*0.004,
+    rot: Math.random()*Math.PI*2,
+    rotV: (Math.random()-0.5)*0.08,
+    size: 0.015+Math.random()*0.020,
+    hue,
+    life: 0,
+    maxLife: 120+Math.random()*80,
+    sway: Math.random()*Math.PI*2,
+  });
+}
+
+function drawPetalParticle(p) {
+  const w=W(),h=H();
+  const lifeR = p.life/p.maxLife;
+  const alpha = (1-lifeR)*0.6;
+  const px=p.x*w, py=p.y*h;
+  const sz=p.size*Math.min(w,h);
+
+  ctx.save();
+  ctx.translate(px,py);
+  ctx.rotate(p.rot);
+  ctx.beginPath();
+  ctx.ellipse(0,0,sz,sz*0.45,0,0,Math.PI*2);
+  ctx.fillStyle=getPetalColor(p.hue,p.life*0.3,alpha);
+  ctx.fill();
+  ctx.restore();
+}
+
+// === CENTRAL BLOOM ===
+// The brightness inverse discovery — center blooms during quiet breath
+function drawCentralBloom(t) {
+  const w=W(),h=H(),cx=CX(),cy=CY();
+
+  // Deep field glow
+  const fieldR = Math.max(1, w*(0.15+amp*0.22));
+  const fg = ctx.createRadialGradient(cx,cy,0,cx,cy,fieldR*2.2);
+  fg.addColorStop(0, `rgba(220,100,120,${0.04+amp*0.06})`);
+  fg.addColorStop(0.5,`rgba(180,80,80,${0.02+amp*0.03})`);
+  fg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.beginPath();ctx.arc(cx,cy,Math.max(1,fieldR*2.2),0,Math.PI*2);
+  ctx.fillStyle=fg;ctx.fill();
+
+  // BRIGHTNESS INVERSE BLOOM
+  // The quieter the breath, the more luminous the central bloom
+  // This is the key discovery made visible
+  if(bright > 0.05) {
+    const bIntensity = (bright-0.15) * 0.55;
+    const bloomR = Math.max(1, w*(0.06+bright*0.18));
+    const bg = ctx.createRadialGradient(cx,cy,0,cx,cy,bloomR);
+    bg.addColorStop(0, `rgba(255,220,180,${bIntensity})`);
+    bg.addColorStop(0.3,`rgba(235,160,100,${bIntensity*0.6})`);
+    bg.addColorStop(0.6,`rgba(200,100,120,${bIntensity*0.3})`);
+    bg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.beginPath();ctx.arc(cx,cy,Math.max(1,bloomR),0,Math.PI*2);
+    ctx.fillStyle=bg;ctx.fill();
+  }
+
+  // Central core pulse — always present, breath-sized
+  const cR = Math.max(0.5, w*0.006+amp*w*0.018+Math.sin(t*2.2)*w*0.003);
+  const cg = ctx.createRadialGradient(cx,cy,0,cx,cy,cR+w*0.025);
+  cg.addColorStop(0,`rgba(255,235,190,${0.7+bright*0.3})`);
+  cg.addColorStop(0.4,`rgba(235,150,100,0.3)`);
+  cg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.beginPath();ctx.arc(cx,cy,Math.max(0.5,cR+w*0.025),0,Math.PI*2);
+  ctx.fillStyle=cg;ctx.fill();
+  ctx.beginPath();ctx.arc(cx,cy,Math.max(0.1,cR),0,Math.PI*2);
+  ctx.fillStyle=`rgba(255,240,200,${0.75+Math.sin(t*2.5)*0.25})`;ctx.fill();
+}
+
+// === SPIRAL VINE ===
+function drawVine(t) {
+  const w=W(),h=H(),cx=CX(),cy=CY();
+  ctx.beginPath();
+  let first=true;
+  for(let i=0;i<=200;i++){
+    const fr=i/200;
+    const ang=fr*Math.PI*10+t*0.6;
+    const r=Math.max(0.1,w*(0.02+fr*0.18)*(0.4+amp*0.6));
+    const px=cx+Math.cos(ang)*r;
+    const py=cy+Math.sin(ang)*r*0.85;
+    first?(ctx.moveTo(px,py),first=false):ctx.lineTo(px,py);
+  }
+  ctx.strokeStyle=`rgba(120,180,100,${0.12+amp*0.10})`;
+  ctx.lineWidth=Math.max(0.5,w*0.003);ctx.stroke();
+}
+
+// === SPAWN LOGIC ===
+let spawnTimer = 0;
+let hintTimer = 0;
+let hasHadBreath = false;
+
+function updateSpawn(t) {
+  spawnTimer++;
+  const w=W(),h=H(),cx=CX(),cy=CY();
+
+  // Spawn flower on breath onset
+  if(onset > 0.08 && amp > 0.03) {
+    if(spawnTimer > 12) {
+      spawnTimer = 0;
+      // Flowers bloom in a radial pattern from center
+      const angle = Math.random()*Math.PI*2;
+      const dist = 0.12 + Math.random()*0.22;
+      const x = 0.5 + Math.cos(angle)*dist*(w/Math.max(w,h));
+      const y = 0.5 + Math.sin(angle)*dist*(h/Math.max(w,h));
+      const size = (0.04+amp*0.06+bright*0.04)*Math.min(w,h);
+      spawnFlower(x, y, size, pitchHue);
+    }
+  }
+
+  // Spawn petal particles from existing flowers
+  flowers.forEach(f => {
+    if(f.bloom > 0.3 && onset > 0.05 && Math.random() < 0.25) {
+      spawnPetalParticle(f.x, f.y, f.hue);
+    }
+  });
+
+  // Update flowers
+  for(let i=flowers.length-1;i>=0;i--){
+    const f=flowers[i];
+    f.rotation += f.rotSpeed;
+    f.life++;
+    if(f.bloom < 1) f.bloom = Math.min(1, f.bloom+f.bloomSpeed*(0.5+amp*1.5));
+    // Gentle sway
+    f.x += Math.sin(t*0.3+f.swayPhase)*0.0002;
+    if(f.life > f.maxLife) flowers.splice(i,1);
+  }
+
+  // Update petal particles
+  for(let i=petalParticles.length-1;i>=0;i--){
+    const p=petalParticles[i];
+    p.x += p.vx + Math.sin(t*0.5+p.sway)*0.001;
+    p.y += p.vy;
+    p.rot += p.rotV;
+    p.life++;
+    if(p.life > p.maxLife) petalParticles.splice(i,1);
+  }
+
+  // Breath hint
+  if(!hasHadBreath) {
+    hintTimer++;
+    if(hintTimer > 120) {
+      HINT.classList.add('show');
+    }
+  }
+  if(amp > 0.03 && !hasHadBreath) {
+    hasHadBreath = true;
+    HINT.classList.remove('show');
+    HINT.classList.add('fade');
+  }
+
+  // Spawn central flower on first breath
+  if(amp > 0.03 && flowers.length === 0) {
+    spawnFlower(0.5, 0.5, 0.10*Math.min(w,h), pitchHue);
+  }
+}
+
+// === MAIN LOOP ===
+let t = 0;
+let infoShown = false;
+let infoTimer = 0;
+
+function draw() {
+  if(!isRunning) return;
+
+  analyzeAudio();
+  updateSpawn(t);
+
+  const w=W(),h=H(),cx=CX(),cy=CY();
+
+  // Background — very slow fade, memories of blooms persist
+  ctx.fillStyle=`rgba(0,0,0,${0.025+amp*0.020})`;
+  ctx.fillRect(0,0,w,h);
+
+  // Warm ambient glow — always present, breath-colored
+  const ambR = Math.max(1,w*0.35);
+  const ambG = ctx.createRadialGradient(cx,cy,0,cx,cy,ambR);
+  ambG.addColorStop(0,`rgba(80,20,30,${0.06+amp*0.04})`);
+  ambG.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.beginPath();ctx.arc(cx,cy,Math.max(1,ambR),0,Math.PI*2);
+  ctx.fillStyle=ambG;ctx.fill();
+
+  // Vine
+  drawVine(t);
+
+  // Petal particles (behind flowers)
+  petalParticles.forEach(p=>drawPetalParticle(p));
+
+  // Flowers
+  flowers.forEach(f=>drawFlower(f,t));
+
+  // Central bloom
+  drawCentralBloom(t);
+
+  // Info fade in after first breath
+  if(amp > 0.03 && !infoShown) {
+    infoShown = true;
+    INFO.classList.add('show');
+    infoTimer = 0;
+  }
+  if(infoShown) {
+    infoTimer++;
+    if(infoTimer > 300) INFO.classList.remove('show');
+  }
+
+  t += 0.016;
+  requestAnimationFrame(draw);
+}
+
+// === START ===
+async function startExperience() {
+  document.getElementById('start').style.display='none';
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      }
+    });
+    initAudio(stream);
+    isRunning = true;
+
+    // Show breath hint after delay
+    setTimeout(()=>{
+      if(!hasHadBreath) HINT.classList.add('show');
+    }, 2000);
+
+    requestAnimationFrame(draw);
+
+  } catch(err) {
+    // Microphone denied - show gentle message
+    document.getElementById('start').style.display='flex';
+    document.getElementById('start').innerHTML = `
+      <h1>ZigGlow</h1>
+      <h2>Microphone needed</h2>
+      <p style="color:rgba(200,140,80,0.7);font-family:Georgia,serif;font-size:16px;letter-spacing:0.1em;line-height:1.8;max-width:280px">
+        Please allow microphone access when prompted, then refresh this page to begin.
+      </p>
+      <p style="color:rgba(160,100,50,0.45);font-family:Georgia,serif;font-size:12px;letter-spacing:0.15em;margin-top:24px">
+        Zigverse Studio &middot; zig@zigverse.studio
+      </p>
+    `;
+  }
+}
+</script>
+</body>
+</html>
