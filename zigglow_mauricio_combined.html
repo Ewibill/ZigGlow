@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Feliz Cumpleanos Mauricio &middot; ZigGlow</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center}
+canvas{display:block;max-width:100vw;max-height:100vh;touch-action:none}
+#start{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:radial-gradient(ellipse at center,#1a0508 0%,#000 70%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  z-index:100;cursor:pointer;padding:40px;text-align:center;
+}
+#start h1{font-family:Georgia,serif;font-size:clamp(12px,3.5vw,16px);font-weight:400;
+  letter-spacing:0.35em;text-transform:uppercase;color:rgba(200,140,60,0.55);margin-bottom:14px}
+#start h2{font-family:Georgia,serif;font-size:clamp(34px,8.5vw,66px);font-weight:400;
+  letter-spacing:0.08em;color:rgba(235,180,55,0.95);margin-bottom:6px}
+#start h3{font-family:Georgia,serif;font-size:clamp(16px,4.5vw,30px);font-weight:400;
+  letter-spacing:0.14em;color:rgba(200,70,100,0.88);margin-bottom:10px;font-style:italic}
+#start .emoji{font-size:clamp(32px,8vw,52px);margin-bottom:32px}
+#start .btn{background:transparent;border:1px solid rgba(235,180,55,0.5);
+  color:rgba(235,180,55,0.92);font-family:Georgia,serif;font-size:clamp(12px,3vw,15px);
+  letter-spacing:0.32em;text-transform:uppercase;padding:16px 42px;cursor:pointer;
+  transition:all 0.4s;margin-bottom:26px}
+#start .btn:hover{border-color:rgba(235,180,55,0.9);color:#fff;background:rgba(235,180,55,0.08)}
+#start .instr{font-family:Georgia,serif;font-size:clamp(11px,2.5vw,13px);
+  color:rgba(200,140,55,0.35);letter-spacing:0.14em;line-height:2.0}
+#info{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);
+  text-align:center;pointer-events:none;opacity:0;transition:opacity 1s;z-index:10}
+#info.show{opacity:0.65}
+#info.fade{opacity:0;transition:opacity 3s}
+.it{color:rgba(235,180,55,0.85);font-family:Georgia,serif;font-size:11px;letter-spacing:0.22em;text-transform:uppercase}
+.is{color:rgba(200,140,55,0.4);font-family:Georgia,serif;font-size:9px;letter-spacing:0.2em;margin-top:3px}
+#crack-count{position:fixed;top:18px;right:18px;font-family:Georgia,serif;
+  font-size:clamp(11px,2.8vw,14px);letter-spacing:0.2em;color:rgba(235,180,55,0.5);
+  pointer-events:none;opacity:0;transition:opacity 0.5s;z-index:10;text-align:right}
+#crack-count.show{opacity:1}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="start">
+  <h1>ZigGlow &nbsp;&middot;&nbsp; Zigverse Studio</h1>
+  <h2>Feliz Cumplea&ntilde;os</h2>
+  <h3>Mauricio</h3>
+  <div class="emoji">&#127881;</div>
+  <button class="btn" onclick="startExperience()">Begin</button>
+  <p class="instr">
+    Sing, hum, or blow into your phone<br>
+    Every breath is a firework<br>
+    Blow to swing the pi&ntilde;ata<br>
+    Keep going until it bursts!<br><br>
+    No instrument needed &mdash; your voice works perfectly<br>
+    A kazoo makes it even more fun<br><br>
+    From Bill &nbsp;&middot;&nbsp; Zigverse Studio
+  </p>
+</div>
+<div id="info">
+  <div class="it">Feliz Cumplea&ntilde;os Mauricio</div>
+  <div class="is">ZigGlow &middot; Zigverse Studio &middot; tu aliento es la fiesta</div>
+</div>
+<div id="crack-count"></div>
+
+<script>
+// ============================================================
+// ZIGGLOW — FELIZ CUMPLEANOS MAURICIO
+// Combined: Live fireworks + Pinata goal mechanic
+// Every breath fires fireworks AND charges the pinata
+// Quiet breath = warmest glow (brightness inverse)
+// Zigverse Studio · Bill Hall · zig@zigverse.studio
+// ============================================================
+
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+const INFO=document.getElementById('info');
+const CRACK_COUNT=document.getElementById('crack-count');
+
+function resize(){
+  const vw=window.innerWidth,vh=window.innerHeight;
+  const ratio=9/16;
+  cv.width=vw/vh<ratio?vw:Math.round(vh*ratio);
+  cv.height=vw/vh<ratio?Math.round(vw/ratio):vh;
+}
+resize();
+window.addEventListener('resize',resize);
+const W=()=>cv.width,H=()=>cv.height,CX=()=>cv.width/2,CY=()=>cv.height/2;
+
+// === AUDIO ===
+let analyser,dataArray,freqArray,audioCtx;
+let isRunning=false;
+let amp=0,bright=0,onset=0,pitchHue=0,prevRMS=0,onsetRaw=0;
+
+function initAudio(stream){
+  audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  const src=audioCtx.createMediaStreamSource(stream);
+  analyser=audioCtx.createAnalyser();
+  analyser.fftSize=2048;
+  analyser.smoothingTimeConstant=0.55;
+  src.connect(analyser);
+  dataArray=new Uint8Array(analyser.frequencyBinCount);
+  freqArray=new Float32Array(analyser.frequencyBinCount);
+}
+
+function analyzeAudio(){
+  if(!analyser)return;
+  analyser.getByteTimeDomainData(dataArray);
+  analyser.getFloatFrequencyData(freqArray);
+  let sum=0;
+  for(let i=0;i<dataArray.length;i++){const v=(dataArray[i]/128)-1;sum+=v*v;}
+  const rms=Math.sqrt(sum/dataArray.length);
+  const rawAmp=rms>0.008?Math.min(1,rms*22):0;
+  amp+=(rawAmp-amp)*0.11;
+  onsetRaw=Math.max(0,(rawAmp-prevRMS)*12);
+  onset+=(onsetRaw-onset)*0.28;
+  prevRMS=rawAmp;
+  const sr=audioCtx.sampleRate;
+  const binHz=sr/analyser.fftSize;
+  const hiCut=Math.floor(2000/binHz);
+  let total=0,hi=0;
+  for(let i=1;i<freqArray.length;i++){
+    const e=Math.pow(10,freqArray[i]/20);
+    total+=e;if(i>hiCut)hi+=e;
+  }
+  bright+=((amp<0.03?0:total>0?hi/total:0)-bright)*0.07;
+  const pMin=Math.floor(80/binHz),pMax=Math.floor(2000/binHz);
+  let mxV=-Infinity,mxI=0;
+  for(let i=pMin;i<pMax;i++){if(freqArray[i]>mxV){mxV=freqArray[i];mxI=i;}}
+  pitchHue+=((mxI-pMin)/(pMax-pMin)-pitchHue)*0.04;
+}
+
+// === PALETTE ===
+const PAL=[
+  [235,60,50],[240,115,28],[235,185,38],[198,50,108],
+  [172,45,158],[52,178,138],[238,198,55],[232,85,65],
+  [178,218,75],[50,138,208],[238,158,45],[218,55,128],
+];
+
+// === PARTICLES — confetti + fireworks + streamers ===
+const PARTS=[];
+const MAX_P=280;
+
+function spawnConfetti(x,y,intensity){
+  const n=Math.round(2+intensity*8);
+  for(let i=0;i<n;i++){
+    if(PARTS.length>=MAX_P)PARTS.shift();
+    const ang=Math.random()*Math.PI*2;
+    const spd=(0.004+Math.random()*0.014)*intensity;
+    PARTS.push({
+      x,y,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd-0.006,
+      life:0,maxLife:70+Math.random()*100,
+      cidx:Math.floor(Math.random()*PAL.length),
+      shape:Math.random()<0.5?'rect':'circle',
+      w2:0.009+Math.random()*0.018,h2:0.004+Math.random()*0.007,
+      rot:Math.random()*Math.PI*2,rotV:(Math.random()-0.5)*0.14,
+      sway:Math.random()*Math.PI*2,isBurst:false,
+    });
+  }
+}
+
+function spawnFirework(x,y,intensity){
+  if(PARTS.length>=MAX_P)PARTS.shift();
+  // Single firework trail shooting upward
+  const ang=-Math.PI/2+(Math.random()-0.5)*0.5;
+  const spd=(0.006+Math.random()*0.010)*intensity;
+  const cidx=Math.floor(pitchHue*PAL.length)%PAL.length;
+  PARTS.push({
+    x,y,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+    life:0,maxLife:35+Math.random()*25,
+    cidx,shape:'firework',
+    w2:0.004,h2:0.004,rot:0,rotV:0,sway:0,
+    isBurst:false,
+    trail:[{x,y}],
+  });
+}
+
+function spawnBurstRing(x,y,intensity){
+  // Full radial burst for pinata crack/explosion
+  const n=16+Math.round(intensity*24);
+  for(let i=0;i<n;i++){
+    if(PARTS.length>=MAX_P)PARTS.shift();
+    const ang=(i/n)*Math.PI*2;
+    const spd=(0.007+Math.random()*0.018)*intensity;
+    PARTS.push({
+      x,y,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+      life:0,maxLife:40+Math.random()*40,
+      cidx:(Math.floor(pitchHue*PAL.length)+Math.floor(Math.random()*3))%PAL.length,
+      shape:'spark',w2:0.003,h2:0.003,
+      rot:0,rotV:0,sway:0,isBurst:true,
+      trail:[{x,y}],
+    });
+  }
+}
+
+function spawnStreamer(x,y){
+  if(PARTS.length>=MAX_P)PARTS.shift();
+  const ang=-Math.PI/2+(Math.random()-0.5)*1.0;
+  PARTS.push({
+    x,y,vx:Math.cos(ang)*0.003,vy:Math.sin(ang)*0.005-0.003,
+    life:0,maxLife:180+Math.random()*80,
+    cidx:Math.floor(Math.random()*PAL.length),
+    shape:'streamer',w2:0.003,h2:0.003,
+    rot:0,rotV:0,sway:Math.random()*Math.PI*2,
+    isBurst:false,trail:[],
+  });
+}
+
+function drawStar(r){
+  ctx.beginPath();
+  for(let i=0;i<10;i++){
+    const ang=(i/10)*Math.PI*2-Math.PI/2;
+    const rad=i%2===0?r:r*0.4;
+    i===0?ctx.moveTo(Math.cos(ang)*rad,Math.sin(ang)*rad)
+         :ctx.lineTo(Math.cos(ang)*rad,Math.sin(ang)*rad);
+  }
+  ctx.closePath();
+}
+
+function updateDrawParts(){
+  const w=W(),h=H();
+  for(let i=PARTS.length-1;i>=0;i--){
+    const p=PARTS[i];
+    p.x+=p.vx+Math.sin((p.sway||0)+p.life*0.04)*0.0006;
+    p.y+=p.vy;
+    p.vy+=0.00020;
+    p.rot+=(p.rotV||0);
+    p.life++;
+    if(p.life>p.maxLife||p.y>1.12||p.y<-0.1){PARTS.splice(i,1);continue;}
+    const lr=p.life/p.maxLife;
+    const al=(1-lr)*0.88;
+    const c=PAL[p.cidx];
+
+    if(p.shape==='firework'||p.shape==='spark'){
+      // Draw trail
+      if(!p.trail)p.trail=[];
+      p.trail.push({x:p.x*w,y:p.y*h});
+      if(p.trail.length>12)p.trail.shift();
+      if(p.trail.length>2){
+        ctx.beginPath();
+        p.trail.forEach((pt,pi)=>pi===0?ctx.moveTo(pt.x,pt.y):ctx.lineTo(pt.x,pt.y));
+        ctx.strokeStyle=`rgba(${c[0]},${c[1]},${c[2]},${al})`;
+        ctx.lineWidth=Math.max(0.5,w*0.003*(1-lr));
+        ctx.stroke();
+      }
+      // Head
+      ctx.beginPath();
+      ctx.arc(p.x*w,p.y*h,Math.max(0.3,w*0.004*(1-lr*0.6)),0,Math.PI*2);
+      ctx.fillStyle=lr<0.25?`rgba(255,245,195,${al})`:`rgba(${c[0]},${c[1]},${c[2]},${al})`;
+      ctx.fill();
+      continue;
+    }
+
+    if(p.shape==='streamer'){
+      if(!p.trail)p.trail=[];
+      p.trail.push({x:p.x*w,y:p.y*h});
+      if(p.trail.length>28)p.trail.shift();
+      if(p.trail.length>2){
+        ctx.beginPath();
+        p.trail.forEach((pt,pi)=>pi===0?ctx.moveTo(pt.x,pt.y):ctx.lineTo(pt.x,pt.y));
+        ctx.strokeStyle=`rgba(${c[0]},${c[1]},${c[2]},${al*0.8})`;
+        ctx.lineWidth=Math.max(0.5,w*0.004);
+        ctx.lineJoin='round';ctx.stroke();
+      }
+      continue;
+    }
+
+    ctx.save();
+    ctx.translate(p.x*w,p.y*h);
+    ctx.rotate(p.rot);
+    if(p.shape==='rect'){
+      ctx.fillStyle=`rgba(${c[0]},${c[1]},${c[2]},${al})`;
+      ctx.fillRect(-p.w2*w/2,-p.h2*h/2,p.w2*w,p.h2*h);
+    } else {
+      ctx.beginPath();
+      ctx.arc(0,0,Math.max(0.5,p.w2*w*0.45),0,Math.PI*2);
+      ctx.fillStyle=`rgba(${c[0]},${c[1]},${c[2]},${al})`;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+// === PINATA ===
+let pinata={
+  x:0.5,y:0.26,sway:0,swayV:0,
+  charge:0,cracks:0,broken:false,
+  brokenTimer:0,sustainCount:0,
+  col1:0,col2:4,points:6,
+};
+
+function resetPinata(){
+  pinata.sway=0;pinata.swayV=0;
+  pinata.charge=0;pinata.cracks=0;
+  pinata.broken=false;pinata.brokenTimer=0;
+  pinata.sustainCount=0;
+  pinata.col1=Math.floor(Math.random()*PAL.length);
+  pinata.col2=(pinata.col1+4)%PAL.length;
+  pinata.points=5+Math.floor(Math.random()*4);
+  updateCrackDisplay();
+}
+resetPinata();
+
+function updateCrackDisplay(){
+  const remaining=5-pinata.cracks;
+  if(remaining>0&&!pinata.broken){
+    CRACK_COUNT.textContent='&#128248; '.repeat(remaining);
+    CRACK_COUNT.innerHTML='&#127881;'.repeat(5-remaining)+'&#127880;'.repeat(remaining);
+    CRACK_COUNT.classList.add('show');
+  } else {
+    CRACK_COUNT.classList.remove('show');
+  }
+}
+
+function drawPinata(t){
+  const w=W(),h=H(),cx=CX();
+  if(pinata.broken)return;
+  const px=pinata.x*w, py=pinata.y*h;
+  const R=Math.min(w,h)*0.10;
+
+  // String
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(px,0);
+  for(let i=0;i<=20;i++){
+    const fy=i/20;
+    ctx.lineTo(px+Math.sin(fy*Math.PI*3+t*0.5+pinata.sway)*w*0.007,fy*(py-R));
+  }
+  ctx.strokeStyle='rgba(180,140,60,0.65)';
+  ctx.lineWidth=Math.max(1,w*0.004);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(px,py);
+  ctx.rotate(pinata.sway);
+
+  const pts=pinata.points;
+  const outerR=R, innerR=R*0.52;
+
+  // Body
+  ctx.beginPath();
+  for(let i=0;i<pts*2;i++){
+    const ang=(i/pts/2)*Math.PI*2-Math.PI/2;
+    const r=i%2===0?outerR:innerR;
+    i===0?ctx.moveTo(Math.cos(ang)*r,Math.sin(ang)*r)
+         :ctx.lineTo(Math.cos(ang)*r,Math.sin(ang)*r);
+  }
+  ctx.closePath();
+  const c1=PAL[pinata.col1];
+  ctx.fillStyle=`rgba(${c1[0]},${c1[1]},${c1[2]},0.90)`;
+  ctx.fill();
+
+  // Alternating color points
+  for(let i=0;i<pts;i++){
+    if(i%2===0)continue;
+    const a1=(i/pts)*Math.PI*2-Math.PI/2;
+    const a2=((i+0.5)/pts)*Math.PI*2-Math.PI/2;
+    const a3=((i+1)/pts)*Math.PI*2-Math.PI/2;
+    ctx.beginPath();
+    ctx.moveTo(0,0);
+    ctx.lineTo(Math.cos(a1)*innerR,Math.sin(a1)*innerR);
+    ctx.lineTo(Math.cos(a2)*outerR,Math.sin(a2)*outerR);
+    ctx.lineTo(Math.cos(a3)*innerR,Math.sin(a3)*innerR);
+    ctx.closePath();
+    const c2=PAL[pinata.col2];
+    ctx.fillStyle=`rgba(${c2[0]},${c2[1]},${c2[2]},0.86)`;
+    ctx.fill();
+  }
+
+  // Border
+  ctx.beginPath();
+  for(let i=0;i<pts*2;i++){
+    const ang=(i/pts/2)*Math.PI*2-Math.PI/2;
+    const r=i%2===0?outerR:innerR;
+    i===0?ctx.moveTo(Math.cos(ang)*r,Math.sin(ang)*r)
+         :ctx.lineTo(Math.cos(ang)*r,Math.sin(ang)*r);
+  }
+  ctx.closePath();
+  ctx.strokeStyle='rgba(255,230,150,0.45)';
+  ctx.lineWidth=Math.max(1,w*0.003);
+  ctx.stroke();
+
+  // Cracks
+  if(pinata.cracks>0){
+    ctx.strokeStyle='rgba(20,10,5,0.75)';
+    ctx.lineWidth=Math.max(1,w*0.003);
+    const cs=[
+      {x:0.28,y:-0.18,a:0.8,l:0.5},{x:-0.22,y:0.12,a:2.2,l:0.45},
+      {x:0.10,y:0.32,a:1.5,l:0.4},{x:-0.32,y:-0.12,a:0.2,l:0.38},
+      {x:0.18,y:-0.28,a:3.0,l:0.42},
+    ];
+    for(let c=0;c<pinata.cracks&&c<cs.length;c++){
+      const cr=cs[c];
+      ctx.beginPath();
+      let cx2=cr.x*R,cy2=cr.y*R;
+      ctx.moveTo(cx2,cy2);
+      for(let s=0;s<4;s++){
+        cx2+=Math.cos(cr.a+s*0.4)*cr.l*R*0.28;
+        cy2+=Math.sin(cr.a+s*0.4)*cr.l*R*0.28;
+        ctx.lineTo(cx2,cy2);
+        cr.a+=0.55;
+      }
+      ctx.stroke();
+    }
+  }
+
+  // Charge glow
+  if(pinata.charge>0.15){
+    const cg=ctx.createRadialGradient(0,0,0,0,0,R*1.5);
+    const gc=pinata.charge>0.65?[235,80,50]:pinata.charge>0.35?[235,150,40]:[235,185,40];
+    cg.addColorStop(0,`rgba(${gc[0]},${gc[1]},${gc[2]},${pinata.charge*0.32})`);
+    cg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.beginPath();ctx.arc(0,0,R*1.5,0,Math.PI*2);
+    ctx.fillStyle=cg;ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// === WARMTH / BLOOM ===
+function drawWarmth(t){
+  const w=W(),h=H(),cx=CX(),cy=CY();
+  const ag=ctx.createRadialGradient(cx,cy,0,cx,cy,w*0.48);
+  ag.addColorStop(0,`rgba(80,18,5,${0.04+amp*0.05})`);
+  ag.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.beginPath();ctx.arc(cx,cy,w*0.48,0,Math.PI*2);
+  ctx.fillStyle=ag;ctx.fill();
+
+  // Brightness inverse bloom
+  if(bright>0.10){
+    const bi=(bright-0.10)*0.48;
+    const br2=Math.max(1,w*(0.055+bright*0.14));
+    const bg=ctx.createRadialGradient(cx,cy,0,cx,cy,br2);
+    bg.addColorStop(0,`rgba(255,210,95,${bi})`);
+    bg.addColorStop(0.4,`rgba(230,130,35,${bi*0.42})`);
+    bg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.beginPath();ctx.arc(cx,cy,Math.max(1,br2),0,Math.PI*2);
+    ctx.fillStyle=bg;ctx.fill();
+  }
+
+  // Core pulse
+  const cR=Math.max(0.5,w*0.005+Math.sin(t*2.3)*w*0.003+amp*w*0.013);
+  const cg=ctx.createRadialGradient(cx,cy,0,cx,cy,cR+w*0.02);
+  cg.addColorStop(0,`rgba(255,238,175,${0.68+bright*0.32})`);
+  cg.addColorStop(0.4,'rgba(232,148,48,0.25)');
+  cg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.beginPath();ctx.arc(cx,cy,Math.max(0.5,cR+w*0.02),0,Math.PI*2);
+  ctx.fillStyle=cg;ctx.fill();
+  ctx.beginPath();ctx.arc(cx,cy,Math.max(0.1,cR),0,Math.PI*2);
+  ctx.fillStyle=`rgba(255,236,168,${0.70+Math.sin(t*2.7)*0.30})`;
+  ctx.fill();
+}
+
+// === MAIN LOOP ===
+let t=0,last=null;
+let hasBreath=false,hintTimer=0,infoShown=false,infoTimer=0;
+let fwTimer=0,confTimer=0,streamTimer=0,shakeT=0;
+
+function draw(ts){
+  if(!isRunning)return;
+  if(!last)last=ts;
+  const dt=Math.min((ts-last)/1000,0.05);
+  last=ts;
+  analyzeAudio();
+
+  const w=W(),h=H(),cx=CX(),cy=CY();
+
+  // Background
+  ctx.fillStyle=`rgba(0,0,0,${0.030+amp*0.020})`;
+  ctx.fillRect(0,0,w,h);
+
+  // Warmth bloom
+  drawWarmth(t);
+
+  // === LIVE FIREWORKS — continuous with breath ===
+  // Every breath immediately makes something beautiful
+  fwTimer++;
+  confTimer++;
+  streamTimer++;
+
+  if(amp>0.06){
+    // Fireworks shoot upward continuously while breathing
+    if(fwTimer>Math.max(4,Math.round(14-amp*10))){
+      fwTimer=0;
+      // Launch from varied positions — party feel
+      const fx=0.25+Math.random()*0.5;
+      const fy=0.55+Math.random()*0.25;
+      spawnFirework(fx,fy,amp);
+    }
+
+    // Confetti rains continuously
+    if(confTimer>Math.max(3,Math.round(12-amp*8))){
+      confTimer=0;
+      spawnConfetti(0.3+Math.random()*0.4, 0.4+Math.random()*0.2, amp*0.6);
+    }
+
+    // Streamers on sustained breath
+    if(amp>0.14&&streamTimer>40){
+      streamTimer=0;
+      spawnStreamer(0.35+Math.random()*0.30, 0.50+Math.random()*0.10);
+    }
+  }
+
+  // === PINATA MECHANIC — sustained breath charges it ===
+  if(!pinata.broken){
+    if(amp>0.18){
+      pinata.sustainCount=(pinata.sustainCount||0)+1;
+    } else {
+      pinata.sustainCount=0;
+    }
+
+    if(pinata.sustainCount>8){
+      pinata.charge=Math.min(1, pinata.charge+(amp-0.18)*0.015);
+      pinata.swayV+=amp*0.10*(Math.sin(t*3)>0?1:-1);
+    } else {
+      pinata.charge=Math.max(0, pinata.charge-0.038);
+    }
+
+    // Pendulum
+    pinata.swayV+=(-pinata.sway*0.018);
+    pinata.swayV*=0.91;
+    pinata.sway+=pinata.swayV;
+    pinata.sway=Math.max(-0.65,Math.min(0.65,pinata.sway));
+
+    // Crack
+    if(pinata.charge>0.82&&pinata.cracks<5){
+      pinata.cracks++;
+      pinata.charge=0;
+      pinata.sustainCount=0;
+      shakeT=8;
+      // Burst ring at crack
+      spawnBurstRing(pinata.x,pinata.y,0.8);
+      updateCrackDisplay();
+    }
+
+    // Final burst
+    if(pinata.cracks>=5){
+      pinata.broken=true;
+      pinata.brokenTimer=0;
+      // MASSIVE celebration burst
+      for(let i=0;i<5;i++) spawnBurstRing(pinata.x,pinata.y,1.2);
+      for(let i=0;i<40;i++) spawnConfetti(0.1+Math.random()*0.8,0.1+Math.random()*0.6,1.2);
+      for(let i=0;i<8;i++) spawnStreamer(0.2+Math.random()*0.6,0.3+Math.random()*0.3);
+      shakeT=20;
+      CRACK_COUNT.classList.remove('show');
+    }
+  } else {
+    pinata.brokenTimer++;
+    if(pinata.brokenTimer>220) resetPinata();
+  }
+
+  // Screen shake
+  const doShake=shakeT>0;
+  if(doShake){
+    ctx.save();
+    ctx.translate((Math.random()-0.5)*w*0.014,(Math.random()-0.5)*h*0.009);
+    shakeT--;
+  }
+
+  // Draw particles
+  updateDrawParts();
+
+  // Draw pinata
+  drawPinata(t);
+
+  if(doShake)ctx.restore();
+
+  // Name text
+  if(hasBreath){
+    const al=0.14+Math.sin(t*0.7)*0.05;
+    ctx.font=`${Math.max(12,w*0.052)}px Georgia`;
+    ctx.textAlign='center';
+    ctx.fillStyle=`rgba(235,185,55,${al})`;
+    ctx.fillText('Mauricio',cx,h*0.10);
+    ctx.font=`italic ${Math.max(9,w*0.032)}px Georgia`;
+    ctx.fillStyle=`rgba(200,70,100,${al*0.72})`;
+    ctx.fillText('feliz cumpleaños',cx,h*0.155);
+  }
+
+  // Hint/info
+  if(!hasBreath){hintTimer++;if(hintTimer>90){
+    const hEl=document.getElementById('hint-text');
+    if(hEl)hEl.style.opacity='0.45';
+  }}
+  if(amp>0.05&&!hasBreath){hasBreath=true;}
+  if(amp>0.06&&!infoShown){infoShown=true;INFO.classList.add('show');}
+  if(infoShown){infoTimer++;if(infoTimer>320)INFO.classList.remove('show');}
+
+  t+=0.016;
+  requestAnimationFrame(draw);
+}
+
+// === START ===
+async function startExperience(){
+  document.getElementById('start').style.display='none';
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}
+    });
+    initAudio(stream);
+    isRunning=true;
+    requestAnimationFrame(draw);
+  }catch(err){
+    document.getElementById('start').innerHTML=`
+      <h2 style="color:rgba(235,185,55,0.9);font-family:Georgia,serif;font-size:22px;letter-spacing:0.1em">Microphone needed</h2>
+      <p style="color:rgba(200,140,55,0.6);font-family:Georgia,serif;font-size:15px;letter-spacing:0.08em;line-height:1.85;max-width:260px;margin-top:20px">
+        Please allow microphone access, then refresh to begin.</p>`;
+    document.getElementById('start').style.display='flex';
+  }
+}
+</script>
+</body>
+</html>
